@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador GPS Realista - Fundamentos Físicos</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #050914; color: #e2e8f0; min-height: 100vh; padding: 1rem; overflow-x: hidden; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        
+        header { text-align: center; margin-bottom: 1rem; }
+        header h1 { color: #00d2ff; margin-bottom: 0.5rem; text-shadow: 0 0 10px rgba(0, 210, 255, 0.5); }
+        header p { color: #94a3b8; font-size: 0.9rem; }
+
+        .grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+        @media (min-width: 768px) { .grid { grid-template-columns: 3fr 2fr; } }
+
+        .card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 1rem; }
+        .card h2 { color: #38bdf8; font-size: 1.1rem; margin-bottom: 0.5rem; border-bottom: 1px solid rgba(56, 189, 248, 0.2); padding-bottom: 0.5rem; }
+
+        /* VISUALIZADOR ORBITAL */
+        .orbit-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            background: radial-gradient(circle at center, #0f172a 0%, #020617 100%);
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #1e293b;
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.8);
+        }
+
+        .earth {
+            position: absolute;
+            width: 80px; height: 80px;
+            background: radial-gradient(circle at 30% 30%, #3b82f6, #1e3a8a, #000);
+            border-radius: 50%;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.4), inset -10px -10px 20px rgba(0,0,0,0.8);
+            z-index: 5;
+        }
+
+        .user-receiver {
+            position: absolute;
+            width: 12px; height: 12px;
+            background: #ef4444;
+            border-radius: 50%;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 15px #ef4444;
+            z-index: 10;
+            transition: all 0.1s linear;
+        }
+
+        .satellite {
+            position: absolute;
+            width: 16px; height: 16px;
+            background: #00d2ff;
+            border-radius: 2px;
+            box-shadow: 0 0 15px #00d2ff;
+            z-index: 15;
+            transition: opacity 0.3s;
+        }
+        
+        .satellite::after {
+            content: '';
+            position: absolute;
+            width: 30px; height: 10px;
+            background: rgba(0, 210, 255, 0.3);
+            top: 3px; left: -7px;
+            border-radius: 50%;
+            z-index: -1;
+        }
+
+        .signal-line {
+            position: absolute;
+            background: rgba(0, 210, 255, 0.2);
+            width: 2px;
+            transform-origin: 0 0;
+            z-index: 1;
+            transition: background 0.3s;
+        }
+
+        /* PANELES DE DATOS */
+        .data-row { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.9rem; }
+        .data-row span:last-child { font-weight: bold; color: #00d2ff; }
+        
+        .status-box {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid #10b981;
+            color: #10b981;
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            margin-top: 1rem;
+            transition: all 0.3s;
+        }
+        .status-box.warning { background: rgba(245, 158, 11, 0.1); border-color: #f59e0b; color: #f59e0b; }
+        .status-box.error { background: rgba(239, 68, 68, 0.1); border-color: #ef4444; color: #ef4444; }
+
+        /* BOTONES */
+        .btn-group { display: flex; gap: 0.5rem; margin-top: 1rem; }
+        .btn { flex: 1; background: #3b82f6; color: white; border: none; padding: 0.6rem; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.3s; font-size: 0.85rem; }
+        .btn:hover { background: #2563eb; }
+        .btn:disabled { background: #475569; cursor: not-allowed; opacity: 0.5; }
+        
+        .btn-add { background: #10b981; }
+        .btn-add:hover { background: #059669; }
+        
+        .btn-remove { background: #f59e0b; }
+        .btn-remove:hover { background: #d97706; }
+        
+        .btn-danger { background: #ef4444; }
+        .btn-danger:hover { background: #dc2626; }
+
+        .log { background: #000; padding: 0.8rem; border-radius: 8px; font-family: monospace; font-size: 0.75rem; height: 120px; overflow-y: auto; margin-top: 1rem; border: 1px solid #1e293b; }
+        .log-entry { margin-bottom: 0.2rem; color: #94a3b8; }
+        .log-entry.error { color: #ef4444; }
+        .log-entry.success { color: #10b981; }
+        .log-entry.warning { color: #f59e0b; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>🛰️ Simulador GPS Realista</h1>
+            <p>Movimiento orbital, trilateración y relatividad en tiempo real</p>
+        </header>
+
+        <div class="grid">
+            <!-- VISUALIZADOR ORBITAL -->
+            <div class="card" style="padding: 0; overflow: hidden; background: transparent; border: none;">
+                <div class="orbit-container" id="orbitContainer">
+                    <div class="earth"></div>
+                    <div class="user-receiver" id="userDot"></div>
+                    <!-- Aquí irán los satélites y señales -->
+                </div>
+            </div>
+
+            <!-- DATOS Y CONTROLES -->
+            <div class="card">
+                <h2>📊 Telemetría del Receptor</h2>
+                
+                <div class="data-row"><span>Satélites visibles:</span> <span id="satCount">0</span></div>
+                <div class="data-row"><span>Posición (Lat, Lon):</span> <span id="posVal">Calculando...</span></div>
+                <div class="data-row"><span>Precisión (DOP):</span> <span id="dopVal">--</span></div>
+                
+                <div class="status-box" id="statusBox">
+                    <strong id="statusTitle">Esperando señal...</strong>
+                    <div style="font-size: 0.8rem; margin-top: 0.3rem;" id="statusMsg">Iniciando conexión satelital</div>
+                </div>
+
+                <!-- CONTROLES DE SATÉLITES -->
+                <h2 style="margin-top: 1.5rem;">🛰️ Gestión de Satélites</h2>
+                <div class="btn-group">
+                    <button class="btn btn-add" id="btnAddSat">➕ Añadir</button>
+                    <button class="btn btn-remove" id="btnRemoveSat">➖ Quitar</button>
+                </div>
+
+                <h2 style="margin-top: 1.5rem;">⚛️ Relatividad y Entorno</h2>
+                <div class="data-row"><span>Error sin corrección:</span> <span id="relError" style="color: #ef4444;">0.00 km</span></div>
+                <div class="data-row"><span>Tiempo simulado:</span> <span id="simTime">0 s</span></div>
+                
+                <div class="btn-group" style="flex-direction: column; gap: 0.5rem;">
+                    <button class="btn" id="btnToggleRelativity" style="background: #ef4444;">⚠️ Corrección Relativista: OFF</button>
+                    <button class="btn" id="btnToggleAtmosphere" style="background: #3b82f6;">☁️ Atmósfera: Normal</button>
+                    <button class="btn btn-danger" id="btnReset">🔄 Reiniciar Simulación</button>
+                </div>
+
+                <div class="log" id="log">
+                    <div class="log-entry">> Iniciando receptor GPS...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // CONFIGURACIÓN INICIAL
+        // ============================================================
+        const container = document.getElementById('orbitContainer');
+        const logBox = document.getElementById('log');
+        
+        let width = container.clientWidth;
+        let height = container.clientHeight;
+        let centerX = width / 2;
+        let centerY = height / 2;
+        const orbitRadius = Math.min(width, height) * 0.4; // Radio de la órbita
+
+        // Variables de estado
+        let satellites = [];
+        let timeElapsed = 0; // segundos simulados
+        let isRelativityActive = false;
+        let isAtmosphereNormal = true;
+        let errorAccumulated = 0;
+        let animationId;
+
+        // ============================================================
+        // CLASE SATÉLITE
+        // ============================================================
+        class Satellite {
+            constructor(id) {
+                this.id = id;
+                // Posición orbital aleatoria
+                this.angle = Math.random() * Math.PI * 2;
+                this.speed = 0.3 + Math.random() * 0.4; // Velocidad aleatoria
+                this.radius = orbitRadius + (Math.random() * 40 - 20); // Diferente altitud
+                
+                // Crear elemento HTML
+                this.el = document.createElement('div');
+                this.el.className = 'satellite';
+                container.appendChild(this.el);
+
+                // Crear línea de señal
+                this.signalEl = document.createElement('div');
+                this.signalEl.className = 'signal-line';
+                container.appendChild(this.signalEl);
+            }
+
+            update(dt) {
+                // Movimiento orbital (ángulo aumenta con el tiempo)
+                this.angle += this.speed * dt;
+                
+                // Calcular posición X e Y
+                this.x = centerX + Math.cos(this.angle) * this.radius;
+                this.y = centerY + Math.sin(this.angle) * this.radius;
+
+                // Actualizar posición del satélite
+                this.el.style.left = `${this.x - 8}px`;
+                this.el.style.top = `${this.y - 8}px`;
+                this.el.style.transform = `rotate(${this.angle}rad)`;
+
+                // Actualizar línea de señal (desde el satélite hasta el receptor central)
+                const dx = centerX - this.x;
+                const dy = centerY - this.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const angleDeg = Math.atan2(dy, dx) * (180 / Math.PI);
+
+                this.signalEl.style.left = `${this.x}px`;
+                this.signalEl.style.top = `${this.y}px`;
+                this.signalEl.style.width = `${distance}px`;
+                this.signalEl.style.transform = `rotate(${angleDeg}deg)`;
+                
+                // Efecto de atenuación si la atmósfera está alterada
+                if (isAtmosphereNormal) {
+                    this.signalEl.style.background = 'rgba(0, 210, 255, 0.2)';
+                } else {
+                    this.signalEl.style.background = 'rgba(239, 68, 68, 0.4)'; // Línea roja si hay interferencia
+                }
+            }
+
+            destroy() {
+                this.el.remove();
+                this.signalEl.remove();
+            }
+        }
+
+        // ============================================================
+        // FUNCIONES DE GESTIÓN
+        // ============================================================
+        function initSimulation() {
+            // Limpiar
+            satellites.forEach(sat => sat.destroy());
+            satellites = [];
+            timeElapsed = 0;
+            errorAccumulated = 0;
+            
+            // Empezar con 4 satélites por defecto
+            for(let i=0; i<4; i++) {
+                addSatellite();
+            }
+            updateButtons();
+        }
+
+        function addSatellite() {
+            if (satellites.length >= 8) {
+                addLog('Límite máximo de satélites alcanzado (8).', 'warning');
+                return;
+            }
+            const newSat = new Satellite(satellites.length + 1);
+            satellites.push(newSat);
+            addLog(`Satélite ${newSat.id} conectado.`, 'success');
+            updateButtons();
+        }
+
+        function removeSatellite() {
+            if (satellites.length <= 0) {
+                addLog('No hay satélites para quitar.', 'warning');
+                return;
+            }
+            const removed = satellites.pop();
+            removed.destroy();
+            addLog(`Satélite ${removed.id} desconectado.`, 'error');
+            updateButtons();
+        }
+
+        function updateButtons() {
+            document.getElementById('btnAddSat').disabled = satellites.length >= 8;
+            document.getElementById('btnRemoveSat').disabled = satellites.length <= 0;
+        }
+
+        // ============================================================
+        // LÓGICA DE PRECISIÓN (DOP)
+        // ============================================================
+        function updatePrecision() {
+            const n = satellites.length;
+            
+            // Simulamos el cálculo de DOP basado en la cantidad de satélites
+            let basePrecision = 5; 
+            
+            if (!isAtmosphereNormal) {
+                basePrecision = 50; // Peor precisión por interferencia
+            }
+
+            // Variación dinámica simulando movimiento
+            const variation = Math.sin(timeElapsed * 0.5) * 2;
+            let finalPrecision = Math.abs(basePrecision + variation);
+
+            document.getElementById('satCount').innerText = n;
+            document.getElementById('dopVal').innerText = n >= 4 ? `± ${finalPrecision.toFixed(1)} m` : 'ERROR';
+
+            const statusBox = document.getElementById('statusBox');
+            const statusTitle = document.getElementById('statusTitle');
+            const statusMsg = document.getElementById('statusMsg');
+
+            if (n >= 4) {
+                statusBox.className = 'status-box';
+                statusTitle.innerText = '✅ Posición 3D Fijada';
+                statusMsg.innerText = `Trilateración exitosa con ${n} satélites.`;
+            } else if (n > 0) {
+                statusBox.className = 'status-box warning';
+                statusTitle.innerText = '⚠️ Señal Débil';
+                statusMsg.innerText = `Solo ${n} satélites. Se necesitan 4 mínimo.`;
+            } else {
+                statusBox.className = 'status-box error';
+                statusTitle.innerText = '❌ Sin Señal';
+                statusMsg.innerText = 'No hay satélites conectados.';
+            }
+
+            // Simular coordenadas solo si hay suficientes satélites
+            if (n >= 4) {
+                const lat = (-16.5000 + Math.sin(timeElapsed * 0.1) * 0.001).toFixed(5);
+                const lon = (-68.1500 + Math.cos(timeElapsed * 0.1) * 0.001).toFixed(5);
+                document.getElementById('posVal').innerText = `${lat}, ${lon}`;
+                document.getElementById('posVal').style.color = '#00d2ff';
+            } else {
+                document.getElementById('posVal').innerText = '---';
+                document.getElementById('posVal').style.color = '#ef4444';
+            }
+        }
+
+        // ============================================================
+        // LÓGICA DE RELATIVIDAD
+        // ============================================================
+        function updateRelativity(dt) {
+            const errorPerDayKm = 11.39;
+            const secondsPerDay = 86400;
+            const errorPerSecondKm = errorPerDayKm / secondsPerDay;
+            const timeScale = 3600; // 1 seg real = 1 hora sim
+
+            if (!isRelativityActive) {
+                errorAccumulated += errorPerSecondKm * dt * timeScale;
+                document.getElementById('relError').innerText = `${errorAccumulated.toFixed(2)} km`;
+                document.getElementById('relError').style.color = '#ef4444';
+            } else {
+                errorAccumulated = 0;
+                document.getElementById('relError').innerText = `0.00 km`;
+                document.getElementById('relError').style.color = '#10b981';
+            }
+
+            timeElapsed += dt;
+            
+            let timeStr = '';
+            if (timeElapsed < 60) timeStr = `${timeElapsed.toFixed(0)} s`;
+            else timeStr = `${(timeElapsed / 60).toFixed(1)} min`;
+            
+            document.getElementById('simTime').innerText = timeStr;
+        }
+
+        // ============================================================
+        // BUCLE DE ANIMACIÓN
+        // ============================================================
+        let lastTime = performance.now();
+
+        function animate(currentTime) {
+            const dt = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
+
+            satellites.forEach(sat => sat.update(dt));
+            updateRelativity(dt);
+            updatePrecision();
+
+            animationId = requestAnimationFrame(animate);
+        }
+
+        // ============================================================
+        // EVENTOS
+        // ============================================================
+        function addLog(msg, type = '') {
+            const div = document.createElement('div');
+            div.className = `log-entry ${type}`;
+            div.innerText = `> ${msg}`;
+            logBox.appendChild(div);
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        document.getElementById('btnAddSat').addEventListener('click', addSatellite);
+        document.getElementById('btnRemoveSat').addEventListener('click', removeSatellite);
+
+        document.getElementById('btnToggleRelativity').addEventListener('click', (e) => {
+            isRelativityActive = !isRelativityActive;
+            if (isRelativityActive) {
+                e.target.innerText = '✅ Corrección Relativista: ON';
+                e.target.style.background = '#10b981';
+                addLog('Corrección relativista activada. Error = 0.', 'success');
+            } else {
+                e.target.innerText = '⚠️ Corrección Relativista: OFF';
+                e.target.style.background = '#ef4444';
+                addLog('¡Peligro! Error acumulado creciendo.', 'error');
+            }
+        });
+
+        document.getElementById('btnToggleAtmosphere').addEventListener('click', (e) => {
+            isAtmosphereNormal = !isAtmosphereNormal;
+            if (isAtmosphereNormal) {
+                e.target.innerText = '☁️ Atmósfera: Normal';
+                e.target.style.background = '#3b82f6';
+                addLog('Retardo ionosférico normal.', 'success');
+            } else {
+                e.target.innerText = '🌩️ Atmósfera: Tormenta Solar';
+                e.target.style.background = '#f59e0b';
+                addLog('Alerta: Interferencia ionosférica. Precisión reducida.', 'warning');
+            }
+        });
+
+        document.getElementById('btnReset').addEventListener('click', () => {
+            cancelAnimationFrame(animationId);
+            initSimulation();
+            lastTime = performance.now();
+            animate(performance.now());
+            addLog('Simulación reiniciada.', 'success');
+        });
+
+        // Iniciar
+        initSimulation();
+        animate(performance.now());
+
+    </script>
+</body>
+</html>
